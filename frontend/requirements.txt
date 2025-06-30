@@ -2,3 +2,4 @@ streamlit
 streamlit-option-menu
 plotly
 openai 
+python-dotenv
