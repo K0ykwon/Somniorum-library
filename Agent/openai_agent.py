@@ -504,25 +504,33 @@ JSON 형식으로 반환해주세요:
     def extract_recommendations_with_openai(self, analysis_result, db_data, character_format_example=None):
         """
         OpenAI를 활용해 분석 결과와 DB(인물/스토리보드)를 비교하여 추천 항목을 추출합니다.
-        인물/씬 모두 'add'와 'update'로 분리하여 반환합니다.
+        모든 정보를 반환하되, 신규/수정이 필요한 항목은 별도로 표시합니다.
         character_format_example: 인물 포맷 예시(dict 또는 str)
         """
         system_prompt = """
         당신은 소설 데이터베이스 관리 전문가입니다.
         아래 분석 결과와 기존 DB(인물/스토리보드)를 비교하여, 다음을 추출하세요:
-        1. 인물: 제공된 인물 포맷에 맞춰 신규/수정/보완이 필요한 인물 추천 항목을 'add'와 'update'로 분리
-        2. 씬: 추가/수정이 필요한 씬 정보를 json 형태로 'add'와 'update'로 분리
+        1. 모든 인물 정보를 포함하되, 신규/수정이 필요한 인물은 'add'와 'update'로 분리
+        2. 모든 씬 정보를 포함하되, 추가/수정이 필요한 씬은 'add'와 'update'로 분리
         각 항목별로 type(add/update), name, reason, data(포맷에 맞는 정보)를 포함하세요.
+        
+        인물 정보 처리 시 주의사항:
+        1. 인물의 이름은 반드시 '이름' 필드에 넣어주세요.
+        2. 'name' 필드가 있다면 '이름' 필드로 변환해주세요.
+        3. 성별은 반드시 '남성', '여성', '기타' 중 하나로 설정하세요.
+        4. 나이는 숫자나 '20대', '30대' 등의 형식으로 설정하세요.
+        5. 설명이 없는 경우 빈 문자열("")로 설정하세요.
+        
         결과는 반드시 아래 JSON 예시 포맷을 따르세요.
         """
         
         # 인물 포맷 예시
         if character_format_example is None:
             character_format_example = {
-                "name": "홍길동",
-                "role": "주인공",
-                "personality": "용감하고 정의로움",
-                "background": "조선시대 의적"
+                "이름": "홍길동",
+                "성별": "남성",
+                "나이": "20",
+                "설명": "조선시대 의적"
             }
         
         user_prompt = f"""
@@ -537,14 +545,28 @@ JSON 형식으로 반환해주세요:
 
         [JSON 반환 예시]
         {{
+            "all_characters": [
+                {json.dumps(character_format_example, ensure_ascii=False)}
+            ],
             "character_recommendations": {{
                 "add": [
-                    {{"name": "홍길동", "reason": "신규 인물", "data": {json.dumps(character_format_example, ensure_ascii=False)}}}
+                    {{
+                        "name": "홍길동",
+                        "reason": "신규 인물",
+                        "data": {json.dumps(character_format_example, ensure_ascii=False)}
+                    }}
                 ],
                 "update": [
-                    {{"name": "임꺽정", "reason": "성격 정보 누락", "data": {json.dumps(character_format_example, ensure_ascii=False)}}}
+                    {{
+                        "name": "임꺽정",
+                        "reason": "성격 정보 누락",
+                        "data": {json.dumps(character_format_example, ensure_ascii=False)}
+                    }}
                 ]
             }},
+            "all_storyboards": [
+                {{"title": "씬1", "description": "..."}}
+            ],
             "storyboard_recommendations": {{
                 "add": [
                     {{"target": "scene", "name": "씬4", "reason": "새로운 이벤트", "data": {{"title": "씬4", "description": "..."}}}}
@@ -569,6 +591,65 @@ JSON 형식으로 반환해주세요:
                 max_tokens=2000
             )
             result = json.loads(response.choices[0].message.content)
+            
+            # 필드 이름 변환 및 데이터 정리
+            def convert_character_fields(char_data):
+                if not isinstance(char_data, dict):
+                    return char_data
+                
+                # name → 이름 변환
+                if 'name' in char_data and '이름' not in char_data:
+                    char_data['이름'] = char_data.pop('name')
+                
+                # 필수 필드 확인 및 기본값 설정
+                if '이름' not in char_data or not char_data['이름']:
+                    return None
+                
+                # 성별 필드 정리
+                if '성별' not in char_data or char_data['성별'] not in ['남성', '여성', '기타']:
+                    char_data['성별'] = '기타'
+                
+                # 나이 필드 정리
+                if '나이' not in char_data or not char_data['나이']:
+                    char_data['나이'] = ''
+                
+                # 설명 필드 정리
+                if '설명' not in char_data:
+                    char_data['설명'] = ''
+                
+                return char_data
+
+            # 전체 인물 목록 처리
+            if 'all_characters' in result:
+                result['all_characters'] = [
+                    char for char in (convert_character_fields(c) for c in result['all_characters'])
+                    if char is not None
+                ]
+
+            # 추천 인물 처리
+            if 'character_recommendations' in result:
+                for rec_type in ['add', 'update']:
+                    if rec_type in result['character_recommendations']:
+                        filtered_recs = []
+                        for rec in result['character_recommendations'][rec_type]:
+                            if isinstance(rec, dict) and 'data' in rec:
+                                converted_data = convert_character_fields(rec['data'])
+                                if converted_data is not None:
+                                    rec['data'] = converted_data
+                                    rec['name'] = converted_data['이름']  # name 필드 업데이트
+                                    filtered_recs.append(rec)
+                        result['character_recommendations'][rec_type] = filtered_recs
+
+            # 필수 키가 없을 경우 빈 리스트/딕셔너리로 초기화
+            if "all_characters" not in result:
+                result["all_characters"] = []
+            if "all_storyboards" not in result:
+                result["all_storyboards"] = []
+            if "character_recommendations" not in result:
+                result["character_recommendations"] = {"add": [], "update": []}
+            if "storyboard_recommendations" not in result:
+                result["storyboard_recommendations"] = {"add": [], "update": []}
+            
             # add/update가 없을 경우 빈 리스트로 보정
             for key in ["character_recommendations", "storyboard_recommendations"]:
                 if key not in result:
@@ -578,10 +659,13 @@ JSON 형식으로 반환해주세요:
                         result[key]["add"] = []
                     if "update" not in result[key]:
                         result[key]["update"] = []
+            
             return result
         except Exception as e:
             print(f"❌ 정보 추출 OpenAI 실패: {e}")
             return {
+                "all_characters": [],
+                "all_storyboards": [],
                 "character_recommendations": {"add": [], "update": []},
                 "storyboard_recommendations": {"add": [], "update": []}
             }
@@ -652,6 +736,8 @@ JSON 형식으로 반환해주세요:
         3. 각 인물은 character_format_example의 모든 필드를 포함해야 하며, 정보가 없는 필드는 빈 문자열("")로 설정하세요.
         4. 인물의 이름은 반드시 포함해야 합니다.
         5. 지나가는 인물이라도 모두 추출하세요.
+        6. 성별은 "남성", "여성", "기타" 중 하나로 설정하세요.
+        7. 나이는 숫자나 "20대", "30대" 등의 형식으로 설정하세요.
         """
         user_prompt = f"""
         [인물 포맷 예시]
@@ -682,11 +768,11 @@ JSON 형식으로 반환해주세요:
             )
             result = json.loads(response.choices[0].message.content)
             filtered = []
-            existing_names = {char.get('name', '') or char.get('이름', '') for char in character_db_example}
+            existing_names = {char.get('이름', '') for char in character_db_example}
             
             for char in result:
                 # 이름이 없으면 제외
-                name = char.get('name', '') or char.get('이름', '')
+                name = char.get('이름', '')
                 if not name:
                     continue
                     
