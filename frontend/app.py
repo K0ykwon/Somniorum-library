@@ -571,57 +571,8 @@ with center_col:
                                     f.write(modified_content)
                                 
                                 # AI 분석 수행
-                                st.write("🔍 AI 분석 시작...")
-                                agent = OpenAINovelAnalysisAgent()
-                                st.write("✅ Agent 초기화 완료")
                                 
-                                # AI 분석 로그 저장
-                                log_entry = {
-                                    'timestamp': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                                    'novel': current_novel,
-                                    'file': file_name,
-                                    'action': '파일 업로드',
-                                    'status': '분석 시작'
-                                }
-                                st.session_state['ai_analysis_logs'].append(log_entry)
-                                
-                                # 분석 로그 초기화
-                                st.session_state['ai_analysis_progress'] = []
-
-                                def progress_callback(msg):
-                                    st.session_state['ai_analysis_progress'].append(msg)
-                                    st.session_state['ai_analysis_progress'] = st.session_state['ai_analysis_progress'][-30:]
-
-                                # spinner 내에서 분석 실행
-                                
-                                with st.spinner('AI 분석 중입니다...'):
-
-                                    agent = OpenAINovelAnalysisAgent()
-                                    analysis_result = agent.analyze_new_file(current_novel, file_name, modified_content, progress_callback=progress_callback)
-                                # spinner 밖에서 결과 저장 및 st.rerun() 한 번만 호출
-
-                                # spinner 아래에 진행 로그 표시
-                                if 'ai_analysis_progress' in st.session_state and st.session_state['ai_analysis_progress']:
-                                    st.markdown('#### AI 분석 진행 상황')
-                                    for log in st.session_state['ai_analysis_progress']:
-                                        st.markdown(log)
-                                
-                                st.write(f"📊 분석 결과: {len(analysis_result)} 항목")
-                                
-                                # 분석 완료 로그 저장
-                                log_entry['status'] = '분석 완료'
-                                log_entry['result_count'] = len(analysis_result)
-                                st.session_state['ai_analysis_logs'][-1] = log_entry
-                                
-                                analysis_report = agent.get_analysis_report(analysis_result)
-                                st.write("📋 분석 리포트 생성 완료")
-                                
-                                # 분석 결과를 세션 상태에 저장
-                                st.session_state['last_analysis_result'] = analysis_result
-                                st.session_state['last_analysis_report'] = analysis_report
-                                st.session_state['show_analysis_result'] = True
-                                
-                                st.success(f'"{file_name}" 파일이 추가 및 저장되었습니다. AI 분석이 완료되었습니다.')
+                                st.success(f'"{file_name}" 파일이 추가 및 저장되었습니다.')
                                 
                                 sync_novel_files(current_novel)
                                 st.session_state['show_file_tabs'] = False
