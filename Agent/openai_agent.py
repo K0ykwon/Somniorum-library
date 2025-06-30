@@ -643,8 +643,9 @@ JSON 형식으로 반환해주세요:
         system_prompt = """
         당신은 소설 인물 데이터베이스 관리 전문가입니다.
         아래 기존 인물 DB와 소설 분석 결과를 비교해,
-        기존 DB에 없는, 추가해야 할 인물만 반드시 아래 인물 포맷(character_format_example)에 맞는 JSON으로 추출하세요.
+        기존 DB에 없는, 추가해야 할 인물만 반드시 아래 인물 포맷(character_format_example)에 맞는 JSON으로 추출하세요.(기존 인물 데이터만 기존 DB에 해당합니다)
         반드시 JSON 리스트만 반환하세요.
+        지나가는 인물이라도 꼭 추출하세요. 또한 소설 분석 결과에 있는 인물 데이터는 적극적으로 참고해서 추출하세요.
         각 인물은 character_format_example의 모든 필드를 포함해야 합니다.
         """
         user_prompt = f"""
