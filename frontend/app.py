@@ -1833,7 +1833,7 @@ if st.session_state.get('show_analysis_result', False):
         st.rerun()
     
     if st.session_state.get('info_extract_clicked', False):
-        st.markdown('### 📝 추천 업데이트')
+        st.markdown('### 📝 전체 정보')
 
         from Agent.openai_agent import OpenAINovelAnalysisAgent
         from Agent.Agent import NovelAnalysisAgent
@@ -1851,114 +1851,193 @@ if st.session_state.get('show_analysis_result', False):
         category_list = list(categories.keys()) if categories else ["기타"]
         analysis_result = st.session_state.get('last_analysis_result', {})
 
+        # --- 적용/취소 UI 함수 정의 ---
+        def show_apply_cancel_ui(item, item_type, key_prefix):
+            # 세션 상태에 버튼 상태 초기화
+            if f"button_state_{key_prefix}" not in st.session_state:
+                st.session_state[f"button_state_{key_prefix}"] = "waiting"  # waiting, applied, cancelled
+            
+            # 버튼이 아직 클릭되지 않은 경우에만 버튼 표시
+            if st.session_state[f"button_state_{key_prefix}"] == "waiting":
+                col1, col2 = st.columns(2)
+                if col1.button("적용", key=f"apply_{key_prefix}"):
+                    # DB에 저장
+                    if item_type == "character":
+                        agent.db_manager.save_character(novel_name, item)
+                    elif item_type == "world":
+                        agent.db_manager.save_world_setting(novel_name, item)
+                    elif item_type == "timeline":
+                        agent.db_manager.save_timeline_event(novel_name, item)
+                    elif item_type == "storyboard":
+                        agent.db_manager.save_storyboard(novel_name, item)
+                    st.session_state[f"button_state_{key_prefix}"] = "applied"
+                    st.rerun()
+                if col2.button("취소", key=f"cancel_{key_prefix}"):
+                    st.session_state[f"button_state_{key_prefix}"] = "cancelled"
+                    st.rerun()
+            else:
+                # 버튼이 클릭된 후의 상태 표시
+                if st.session_state[f"button_state_{key_prefix}"] == "applied":
+                    st.success("✅ 적용되었습니다")
+                elif st.session_state[f"button_state_{key_prefix}"] == "cancelled":
+                    st.info("❌ 취소되었습니다")
+
         # --- 정보 추출 시 스피너 표시 ---
         with st.spinner('정보 추출 중입니다...'):
-            # --- 세션 상태에 신규 항목 저장 (최초 1회만) ---
-            if 'new_characters' not in st.session_state:
-                if 'character_format' in st.session_state:
-                    char_format = st.session_state['character_format']
-                    char_format_example = {k: f"예시 {k}" for k in char_format}
-                    st.session_state['new_characters'] = openai_agent.extract_new_characters_with_openai(
-                        analysis_result, char_db, char_format_example
-                    )
-                else:
-                    st.session_state['new_characters'] = []
+            # --- 전체 정보 추출 ---
+            if 'all_info' not in st.session_state:
+                recommendations = openai_agent.extract_recommendations_with_openai(
+                    analysis_result, 
+                    {
+                        "characters": char_db,
+                        "storyboards": storyboard_db
+                    },
+                    st.session_state.get('character_format', None)
+                )
+                st.session_state['all_info'] = recommendations
+
+            # --- 전체 정보 표시 ---
+            all_info = st.session_state['all_info']
+            
+            # 모든 인물 정보 표시
+            with st.expander("👥 인물 정보", expanded=True):
+                st.markdown("#### 전체 인물 목록")
+                for char in all_info.get('all_characters', []):
+                    name = char.get('이름', 'Unknown')
+                    gender = char.get('성별', '')
+                    age = char.get('나이', '')
+                    desc = char.get('설명', '')
+                    
+                    # 인물 정보를 깔끔하게 표시
+                    st.markdown(f"**{name}**")
+                    if gender or age:
+                        info = []
+                        if gender:
+                            info.append(gender)
+                        if age:
+                            info.append(f"{age}세" if age.isdigit() else age)
+                        st.markdown(f"  - 기본 정보: {', '.join(info)}")
+                    if desc:
+                        st.markdown(f"  - 설명: {desc}")
+                
+                # 신규/수정 추천 인물 표시
+                recommendations = all_info.get('character_recommendations', {})
+                if recommendations.get('add'):
+                    st.markdown("#### ✨ 추가 추천 인물")
+                    for idx, char in enumerate(recommendations['add']):
+                        name = char['data'].get('이름', 'Unknown')
+                        st.markdown(f"**{name}** - {char['reason']}")
+                        
+                        # 인물 상세 정보 표시
+                        data = char['data']
+                        if data.get('성별') or data.get('나이'):
+                            info = []
+                            if data.get('성별'):
+                                info.append(data['성별'])
+                            if data.get('나이'):
+                                age_str = f"{data['나이']}세" if data['나이'].isdigit() else data['나이']
+                                info.append(age_str)
+                            st.markdown(f"  - 기본 정보: {', '.join(info)}")
+                        if data.get('설명'):
+                            st.markdown(f"  - 설명: {data['설명']}")
+                        
+                        show_apply_cancel_ui(char['data'], "character", f"char_add_{idx}")
+                
+                if recommendations.get('update'):
+                    st.markdown("#### 🔄 수정 추천 인물")
+                    for idx, char in enumerate(recommendations['update']):
+                        name = char['data'].get('이름', 'Unknown')
+                        st.markdown(f"**{name}** - {char['reason']}")
+                        if 'diff' in char:
+                            for field, changes in char['diff'].items():
+                                field_name = field
+                                if field == '나이' and changes['new'].isdigit():
+                                    changes['new'] = f"{changes['new']}세"
+                                    if changes['old'] and changes['old'].isdigit():
+                                        changes['old'] = f"{changes['old']}세"
+                                st.markdown(f"  - {field_name}:")
+                                st.markdown(f"    - 기존: {changes['old']}")
+                                st.markdown(f"    - 변경: {changes['new']}")
+                        show_apply_cancel_ui(char['data'], "character", f"char_update_{idx}")
+
+            # 모든 스토리보드 정보 표시
+            with st.expander("📖 스토리보드 정보", expanded=True):
+                st.markdown("#### 전체 씬 목록")
+                for scene in all_info.get('all_storyboards', []):
+                    title = scene.get('title', 'Unknown')
+                    st.markdown(f"**{title}**")
+                    # 씬 상세 정보를 들여쓰기하여 표시
+                    for key, value in scene.items():
+                        if key != 'title' and value:
+                            st.markdown(f"  - {key}: {value}")
+                
+                # 신규/수정 추천 씬 표시
+                recommendations = all_info.get('storyboard_recommendations', {})
+                if recommendations.get('add'):
+                    st.markdown("#### ✨ 추가 추천 씬")
+                    for idx, scene in enumerate(recommendations['add']):
+                        st.markdown(f"**{scene['name']}** - {scene['reason']}")
+                        for key, value in scene.get('data', {}).items():
+                            if value:
+                                st.markdown(f"  - {key}: {value}")
+                        show_apply_cancel_ui(scene['data'], "storyboard", f"scene_add_{idx}")
+                
+                if recommendations.get('update'):
+                    st.markdown("#### 🔄 수정 추천 씬")
+                    for idx, scene in enumerate(recommendations['update']):
+                        st.markdown(f"**{scene['name']}** - {scene['reason']}")
+                        if 'diff' in scene:
+                            for field, changes in scene['diff'].items():
+                                st.markdown(f"  - {field}:")
+                                st.markdown(f"    - 기존: {changes['old']}")
+                                st.markdown(f"    - 변경: {changes['new']}")
+                        show_apply_cancel_ui(scene['data'], "storyboard", f"scene_update_{idx}")
+
+            # 세계관 요소 추출 및 표시
             if 'new_world_elements' not in st.session_state:
                 st.session_state['new_world_elements'] = openai_agent.extract_new_world_elements_with_openai(
                     analysis_result, world_db, category_list
                 )
+            
+            # 세계관 요소 표시
+            with st.expander("🌍 세계관 요소", expanded=True):
+                if st.session_state['new_world_elements']:
+                    for idx, elem in enumerate(st.session_state['new_world_elements']):
+                        st.markdown(f"**{elem.get('title', 'Unknown')}** ({elem.get('category', '기타')})")
+                        if elem.get('description'):
+                            st.markdown(f"  - {elem['description']}")
+                        # 카테고리 선택
+                        safe_category_list = category_list if category_list else ["기타"]
+                        category = elem.get('category', safe_category_list[0])
+                        elem['category'] = st.selectbox(
+                            "카테고리",
+                            safe_category_list,
+                            index=safe_category_list.index(category) if category in safe_category_list else 0,
+                            key=f"world_category_{idx}"
+                        )
+                        show_apply_cancel_ui(elem, "world", f"world_{idx}")
+
+            # 타임라인 추출 및 표시
             if 'new_timeline' not in st.session_state:
                 st.session_state['new_timeline'] = openai_agent.extract_new_timeline_with_openai(
                     analysis_result, timeline_db
                 )
-            if 'new_storyboard' not in st.session_state:
-                st.session_state['new_storyboard'] = openai_agent.extract_new_storyboard_with_openai(
-                    analysis_result, storyboard_db
-                )
 
-        # --- 적용/취소 시 리스트에서 즉시 제거하는 함수 ---
-        def show_apply_cancel_ui(item, item_type, idx, session_key):
-            # 사람이 읽기 쉬운 요약만 출력
-            if item_type == "character":
-                st.markdown(f"**이름:** {item.get('이름', item.get('name', ''))}")
-                for k, v in item.items():
-                    if k not in ['이름', 'name']:
-                        st.markdown(f"- **{k}:** {v}")
-            elif item_type == "world":
-                st.markdown(f"**제목:** {item.get('title', item.get('name', ''))}")
-                st.markdown(f"- **카테고리:** {item.get('category', '')}")
-                st.markdown(f"- **설명:** {item.get('description', '')}")
-            elif item_type == "timeline":
-                st.markdown(f"**제목:** {item.get('title', '')}")
-                st.markdown(f"- **날짜:** {item.get('date', '')}")
-                st.markdown(f"- **설명:** {item.get('description', '')}")
-                st.markdown(f"- **중요도:** {item.get('importance', '')}")
-                st.markdown(f"- **명시적 이벤트:** {'✅' if item.get('explicit_events', False) else '❌'}")
-            elif item_type == "storyboard":
-                st.markdown(f"**제목:** {item.get('title', '')}")
-                st.markdown(f"- **설명:** {item.get('description', '')}")
-            col1, col2 = st.columns(2)
-            if col1.button("적용", key=f"apply_{item_type}_{idx}"):
-                # DB에 저장
-                if item_type == "character":
-                    agent.db_manager.save_character(novel_name, item)
-                elif item_type == "world":
-                    agent.db_manager.save_world_setting(novel_name, item)
-                elif item_type == "timeline":
-                    agent.db_manager.save_timeline_event(novel_name, item)
-                elif item_type == "storyboard":
-                    agent.db_manager.save_storyboard(novel_name, item)
-                st.session_state[session_key].pop(idx)
-                st.rerun()
-            if col2.button("취소", key=f"cancel_{item_type}_{idx}"):
-                st.session_state[session_key].pop(idx)
-                st.rerun()
+            # 타임라인 표시
+            with st.expander("📅 타임라인", expanded=True):
+                if st.session_state['new_timeline']:
+                    for idx, event in enumerate(st.session_state['new_timeline']):
+                        title = event.get('title', 'Unknown')
+                        date = event.get('date', '')
+                        st.markdown(f"**{title}**{f' ({date})' if date else ''}")
+                        if event.get('description'):
+                            st.markdown(f"  - {event['description']}")
+                        if event.get('importance'):
+                            st.markdown(f"  - 중요도: {event['importance']}")
+                        if event.get('explicit_events'):
+                            st.markdown("  - (명시적 이벤트)")
+                        show_apply_cancel_ui(event, "timeline", f"timeline_{idx}")
 
-        # 인물
-        if st.session_state['new_characters']:
-            st.markdown("#### 👤 신규 인물")
-            for idx, char in enumerate(st.session_state['new_characters']):
-                if not isinstance(char, dict):
-                    continue
-                show_apply_cancel_ui(char, "character", idx, 'new_characters')
-        else:
-            st.info('신규 인물 추천이 없습니다.')
-
-
-        # 세계관
-        if st.session_state['new_world_elements']:
-            st.markdown("#### 🌍 신규 세계관 요소")
-            for idx, element in enumerate(st.session_state['new_world_elements']):
-                if not isinstance(element, dict):
-                    continue
-                # category_list가 None이거나 비어있으면 기본값 사용
-                safe_category_list = category_list if category_list else ["기타"]
-                display_name = element.get('title') or element.get('name') or f"세계관 요소 {idx+1}"
-                category = element.get('category', safe_category_list[0]) if isinstance(element, dict) else safe_category_list[0]
-                element['category'] = st.selectbox(
-                    display_name,
-                    safe_category_list,
-                    index=safe_category_list.index(category) if category in safe_category_list else 0,
-                    key=f"world_category_{idx}"
-                )
-                show_apply_cancel_ui(element, "world", idx, 'new_world_elements')
-
-        # 타임라인
-        if st.session_state['new_timeline']:
-            st.markdown("#### ⏳ 신규 타임라인 이벤트")
-            for idx, event in enumerate(st.session_state['new_timeline']):
-                if not isinstance(event, dict):
-                    continue
-                show_apply_cancel_ui(event, "timeline", idx, 'new_timeline')
-
-        # 스토리보드
-        if st.session_state['new_storyboard']:
-            st.markdown("#### 📝 신규 스토리보드(씬)")
-            for idx, scene in enumerate(st.session_state['new_storyboard']):
-                if not isinstance(scene, dict):
-                    continue
-                show_apply_cancel_ui(scene, "storyboard", idx, 'new_storyboard')
-
-    st.markdown('---')
+        st.markdown('---')
 
 
