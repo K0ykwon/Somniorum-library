@@ -643,10 +643,15 @@ JSON 형식으로 반환해주세요:
         system_prompt = """
         당신은 소설 인물 데이터베이스 관리 전문가입니다.
         아래 기존 인물 DB와 소설 분석 결과를 비교해,
-        기존 DB에 없는, 추가해야 할 인물만 반드시 아래 인물 포맷(character_format_example)에 맞는 JSON으로 추출하세요.(기존 인물 데이터만 기존 DB에 해당합니다)
+        기존 DB에 없는, 추가해야 할 인물만 반드시 아래 인물 포맷(character_format_example)에 맞는 JSON으로 추출하세요.
         반드시 JSON 리스트만 반환하세요.
-        지나가는 인물이라도 꼭 추출하세요. 또한 소설 분석 결과에 있는 인물 데이터는 적극적으로 참고해서 추출하세요.
-        각 인물은 character_format_example의 모든 필드를 포함해야 합니다. 포함하지 않는 필드는 ""으로 처리해주세요
+        
+        주의사항:
+        1. 소설 분석 결과의 characters 배열에 있는 인물 정보를 최대한 활용하세요.
+        2. 인물의 이름이 기존 DB에 없다면 무조건 추가하세요.
+        3. 각 인물은 character_format_example의 모든 필드를 포함해야 하며, 정보가 없는 필드는 빈 문자열("")로 설정하세요.
+        4. 인물의 이름은 반드시 포함해야 합니다.
+        5. 지나가는 인물이라도 모두 추출하세요.
         """
         user_prompt = f"""
         [인물 포맷 예시]
@@ -656,7 +661,7 @@ JSON 형식으로 반환해주세요:
         {json.dumps(character_db_example, ensure_ascii=False, indent=2)}
 
         [소설 분석 결과]
-        {json.dumps(analysis_result, ensure_ascii=False, indent=2)}
+        {json.dumps(analysis_result.get('content_analysis', {}), ensure_ascii=False, indent=2)}
 
         [추가할 인물 JSON 리스트 예시]
         [
@@ -677,11 +682,25 @@ JSON 형식으로 반환해주세요:
             )
             result = json.loads(response.choices[0].message.content)
             filtered = []
+            existing_names = {char.get('name', '') or char.get('이름', '') for char in character_db_example}
+            
             for char in result:
-                # character_format_example의 모든 필드가 있는지 확인
-                if not all(k in char and char[k] for k in character_format_example.keys()):
+                # 이름이 없으면 제외
+                name = char.get('name', '') or char.get('이름', '')
+                if not name:
                     continue
+                    
+                # 이미 DB에 있는 이름이면 제외
+                if name in existing_names:
+                    continue
+                    
+                # character_format_example의 모든 필드가 있는지 확인하고, 없으면 빈 문자열로 설정
+                for k in character_format_example.keys():
+                    if k not in char:
+                        char[k] = ""
+                
                 filtered.append(char)
+            
             return filtered
         except Exception as e:
             print(f"❌ 인물 추가 추출 OpenAI 실패: {e}")
